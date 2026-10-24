@@ -115,6 +115,33 @@ test('static GET and HEAD serve only real public files', async () => {
   }
 });
 
+test('configured static root works beneath an aliased parent directory', async () => {
+  // Windows short TEMP paths and linked parent directories resolve to a
+  // different spelling; containment must compare canonical paths on both sides.
+  const actualParent = path.join(folder, 'actual-parent');
+  const aliasParent = path.join(folder, 'aliased-parent');
+  await mkdir(path.join(actualParent, 'app', 'public'), { recursive: true });
+  await writeFile(path.join(actualParent, 'app', 'public', 'index.html'), '<title>aliased fixture</title>');
+  await symlink(actualParent, aliasParent, process.platform === 'win32' ? 'junction' : 'dir');
+  const aliasedServer = createServer({ rootDir: path.join(aliasParent, 'app'),
+    catalogPath: path.join(folder, 'data/catalog.json') });
+  try {
+    await new Promise((resolve, reject) => {
+      aliasedServer.once('error', reject);
+      aliasedServer.listen(0, '127.0.0.1', resolve);
+    });
+    const origin = `http://127.0.0.1:${aliasedServer.address().port}`;
+    const get = await request('/', 'GET', {}, '', origin);
+    assert.equal(get.status, 200);
+    assert.match(get.body, /aliased fixture/);
+    assert.equal((await request('/', 'HEAD', {}, '', origin)).status, 200);
+    assert.equal((await request('/%2e%2e/outside.txt', 'GET', {}, '', origin)).status, 400);
+  } finally {
+    aliasedServer.closeAllConnections();
+    await new Promise((resolve) => aliasedServer.close(resolve));
+  }
+});
+
 test('raw and encoded traversal, dotfiles, secrets and Windows alternate streams are rejected', async () => {
   for (const target of ['/../outside.txt', '/%2e%2e/outside.txt', '/%252e%252e/outside.txt', '/a/%2e%2e/outside.txt',
     '/%2eenv', '/.env', '/secrets.json', '/a\\..\\outside.txt', '/a%5c..%5coutside.txt',

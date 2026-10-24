@@ -214,12 +214,14 @@ async function staticFile(req, res, pathname, publicDir) {
   let filename = base;
   try {
     if ((await lstat(base)).isSymbolicLink()) throw missing();
+    const canonicalBase = await realpath(base);
     for (const part of relative.split('/')) {
       filename = path.join(filename, part);
       if ((await lstat(filename)).isSymbolicLink()) throw missing();
     }
     const resolved = await realpath(filename);
-    if (path.relative(base, resolved).startsWith('..') || path.isAbsolute(path.relative(base, resolved))) throw missing();
+    const fromBase = path.relative(canonicalBase, resolved);
+    if (fromBase.startsWith('..') || path.isAbsolute(fromBase)) throw missing();
     const handle = await open(resolved, 'r');
     try {
       const stat = await handle.stat();
