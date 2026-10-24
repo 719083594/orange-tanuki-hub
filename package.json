@@ -1,0 +1,13 @@
+{
+  "name": "orange-tanuki-hub",
+  "version": "0.2.0",
+  "private": true,
+  "description": "收藏声音与影像，连接你的创作。",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check config.mjs && node --check server.mjs && node --check public/app.js"
+  }
+}

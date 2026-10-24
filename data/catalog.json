@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "hub": {
+    "name": "橙狸集",
+    "english_name": "OrangeTanuki Hub",
+    "slug": "orange-tanuki-hub",
+    "description": "收藏声音与影像，连接你的创作。"
+  },
+  "storage": {
+    "configured": false,
+    "upload_enabled": false
+  },
+  "works": [],
+  "characters": [],
+  "assets": [],
+  "models": [],
+  "model_versions": []
+}

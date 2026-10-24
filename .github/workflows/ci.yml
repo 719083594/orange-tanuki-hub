@@ -1,0 +1,47 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # No install step: the application uses Node.js built-ins only.
+      - run: npm run check
+      - run: npm test
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate and start container
+        run: |
+          docker compose config --quiet
+          CATALOG_FILE=./data/catalog.json docker compose -f compose.yaml -f compose.catalog.yaml config --quiet
+          docker compose up --build --wait --wait-timeout 90
+      - name: Check HTTP service
+        run: |
+          curl --fail --silent http://127.0.0.1:7860/healthz
+          curl --fail --silent http://127.0.0.1:7860/api/v1/info
+      - name: Verify external catalog mount
+        run: |
+          CATALOG_FILE=./data/catalog.json docker compose -f compose.yaml -f compose.catalog.yaml up --wait --wait-timeout 90
+          curl --fail --silent http://127.0.0.1:7860/healthz
+      - name: Stop container
+        if: always()
+        run: docker compose down

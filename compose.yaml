@@ -1,0 +1,17 @@
+services:
+  hub:
+    build: .
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-7860}:7860"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "7860"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-}"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

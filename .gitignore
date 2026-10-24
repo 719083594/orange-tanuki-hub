@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.local/
+dist/
+runtime/
+coverage/
+*.zip
+*.bak
+Thumbs.db
+.idea/
+.vscode/

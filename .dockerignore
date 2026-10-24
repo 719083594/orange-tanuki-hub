@@ -1,0 +1,16 @@
+.git
+.local
+node_modules
+tests
+*.log
+.env
+.env.*
+dist
+runtime
+coverage
+.github
+deploy
+*.zip
+*.bak
+*.md
+compose*.yaml

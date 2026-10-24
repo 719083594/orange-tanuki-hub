@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#f8f7f4">
+  <meta name="description" content="橙狸集 OrangeTanuki Hub — 收藏声音与影像，连接你的创作。">
+  <title>橙狸集 · OrangeTanuki Hub</title><link rel="icon" href="/brand.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css"><script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-library" viewBox="0 0 24 24"><rect x="3" y="5" width="4" height="15" rx="1"/><rect x="9" y="5" width="4" height="15" rx="1"/><path d="m16 4 4-1 3 16-4 1-3-16Z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 9h18"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8l10-5Zm-9 9 9 5 9-5M3 17l9 5 9-5"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 5-6 7 6 7m8-14 6 7-6 7M14 3l-4 18"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></symbol>
+    <symbol id="i-model" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10v10M3 7l9 5 9-5M7.5 4.5l9 5v5"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7A9 9 0 1 0 21 14M20 3v5h-5"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M7 10V7a5 5 0 0 1 10 0v3m-5 5v2"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  </svg>
+  <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+  <aside class="sidebar" id="sidebar" aria-label="主导航">
+    <a class="brand" href="#/overview" aria-label="橙狸集总览"><img src="/brand.svg" width="42" height="42" alt=""><span><strong>橙狸集</strong><small>OrangeTanuki Hub</small></span></a>
+    <div class="workspace-name"><span class="workspace-avatar">OT</span><span>我的素材空间<small>PERSONAL LIBRARY</small></span></div>
+    <nav>
+      <span class="nav-label">素材空间</span>
+      <a class="nav-item" href="#/overview" data-nav="overview"><svg class="icon"><use href="#i-grid"/></svg><span>总览</span></a>
+      <a class="nav-item" href="#/assets" data-nav="assets"><svg class="icon"><use href="#i-library"/></svg><span>素材浏览</span><span class="nav-count" id="nav-assets-count">—</span></a>
+      <a class="nav-item" href="#/catalog" data-nav="catalog"><svg class="icon"><use href="#i-folder"/></svg><span>作品与角色</span></a>
+      <a class="nav-item" href="#/models" data-nav="models"><svg class="icon"><use href="#i-layers"/></svg><span>模型版本</span></a>
+      <span class="nav-label second">管理与连接</span>
+      <a class="nav-item" href="#/upload" data-nav="upload"><svg class="icon"><use href="#i-upload"/></svg><span>上传入库</span></a>
+      <a class="nav-item" href="#/api" data-nav="api"><svg class="icon"><use href="#i-code"/></svg><span>API 接入</span></a>
+    </nav>
+    <div class="sidebar-bottom"><div class="service-state"><span class="status-dot" id="service-dot"></span><span id="service-label">正在连接接口</span></div><p>让素材有序，让创作自由。</p><span class="version-label">ORANGETANUKI HUB / v1</span></div>
+  </aside>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="icon-button menu-button" id="menu-toggle" type="button" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button>
+      <div class="breadcrumbs"><span>工作区</span><svg class="icon"><use href="#i-chevron"/></svg><strong id="breadcrumb-current">总览</strong></div>
+      <form class="global-search" id="global-search" role="search"><svg class="icon"><use href="#i-search"/></svg><input id="global-search-input" aria-label="搜索素材" placeholder="搜索素材名称、描述…" autocomplete="off"><kbd>/</kbd></form>
+      <span class="header-mode"><span></span>只读模式</span>
+    </header>
+    <main id="main" tabindex="-1"></main>
+    <footer class="page-footer"><span>橙狸集 <span class="footer-dot">·</span> OrangeTanuki Hub</span><span>收藏声音与影像，连接你的创作。</span></footer>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <noscript><div class="noscript-message">请启用 JavaScript，以加载真实统计、浏览素材和使用 API 调试。</div></noscript>
+</body>
+</html>

@@ -1,0 +1,11 @@
+services:
+  hub:
+    environment:
+      CATALOG_PATH: /app/runtime/catalog.json
+    volumes:
+      - type: bind
+        source: "${CATALOG_FILE:?Set CATALOG_FILE to an existing catalog JSON file}"
+        target: /app/runtime/catalog.json
+        read_only: true
+        bind:
+          create_host_path: false
