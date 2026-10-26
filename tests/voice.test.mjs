@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createServer } from '../server.mjs';
-import { VoiceIndex, readVoiceDatasets, createVoiceServiceFromEnv, fetchHubFile, parseRange } from '../voice.mjs';
+import { VoiceIndex, VoiceLibraryService, readVoiceDatasets, createVoiceServiceFromEnv, fetchHubFile, parseRange } from '../voice.mjs';
 
 const id='a'.repeat(64);
 const bytes=Buffer.from('RIFF____WAVEfmt '+'a'.repeat(32));
@@ -88,4 +88,43 @@ test('catalog + live audio + text + range remain consistent',async(t)=>{
   assert.equal(await r.text(),'你是谁？\n');
   r=await get('/api/v1/audio/games?utm_source=chatgpt.com');assert.equal(r.status,400);
   r=await get('/api/v1/audio/characters?game=unknown');assert.equal(r.status,400);
+});
+
+
+test('46,598 synthetic clips aggregate without downloading media or returning giant lists', async (t) => {
+  const cases = [['genshin',11254,127],['sanguosha',13910,416],['starrail',2937,82],
+    ['zzz',4404,59],['bh3',14093,41]];
+  function mock(name,count,characters) {
+    const rows=Array.from({length:count},(_,i)=>{
+      const speaker='角色'+(i%characters);
+      const base=speaker+'/'+String(i).padStart(6,'0');
+      return JSON.stringify({record_type:'audio',source_id:i.toString(16).padStart(64,'0'),
+        speaker,language:'zh',audio:base+'.wav',text_file:base+'.txt'});
+    });
+    const index=new VoiceIndex(Buffer.from(rows.join('\n')+'\n'),{layout:'character'});
+    return {state:'ready',index,ready:Promise.resolve()};
+  }
+  const primary=mock(...cases[0]);
+  const library=new VoiceLibraryService(primary,[]);
+  for(const [game,count,characters] of cases.slice(1))
+    library.games.set(game,{id:game,name:game,aliases:[],service:mock(game,count,characters)});
+  const snapshot=library.catalog();
+  assert.equal(snapshot.assets.length,46598);
+  assert.equal(snapshot.characters.length,725);
+  assert.equal(snapshot.works.length,5);
+  assert.strictEqual(library.catalog(),snapshot,'catalog should not rebuild on every request');
+  const server=createServer({voiceService:library});
+  await new Promise((resolve,reject)=>server.listen(0,'127.0.0.1',resolve).once('error',reject));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const host='http://127.0.0.1:'+server.address().port;
+  let response=await fetch(host+'/api/v1/stats');
+  assert.equal(response.status,200);
+  let body=(await response.json()).data;
+  assert.equal(body.totals.assets,46598);
+  assert.equal(body.by_type.audio,46598);
+  response=await fetch(host+'/api/v1/assets?type=audio&page_size=24&page=2');
+  body=await response.json();
+  assert.equal(body.meta.total,46598);
+  assert.equal(body.data.length,24,'browser receives only the requested page');
+  assert.ok(body.data.every(row=>row.play_url?.startsWith('/api/v1/audio/voice?')));
 });
