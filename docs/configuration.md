@@ -87,7 +87,9 @@ Compose 使用项目 `.env` 做插值，但只有 `compose.yaml` 显式声明的
 
 必备：`VOICE_HF_TOKEN`（仅授权访问指定私有 Dataset 的只读 Token）、`VOICE_DATASET_ID`、`VOICE_DATASET_REVISION`（40 位完整 SHA）。多作品需要将一个 JSON 数组放在私有环境变量 `VOICE_DATASETS_JSON` 中，或在运行时提供 `voice-datasets.json`；字段格式见 `voice-datasets.example.json`，不要把真实私有映射提交到公开 GitHub。
 
-可选配置：`VOICE_CACHE_DIR`（默认系统临时目录）、`VOICE_CACHE_MAX_BYTES`（默认 128 MiB）、`VOICE_MAX_FILE_BYTES`（默认 64 MiB）、`VOICE_MAX_INDEX_BYTES`（默认 256 MiB）、`VOICE_DOWNLOAD_TIMEOUT_MS`（默认 120000）。
+可选配置：`VOICE_CACHE_DIR`（默认系统临时目录）、`VOICE_CACHE_MAX_BYTES`（默认每个数据集 64 MiB）、`VOICE_MAX_FILE_BYTES`（默认 64 MiB）、`VOICE_MAX_INDEX_BYTES`（默认 256 MiB）、`VOICE_DOWNLOAD_TIMEOUT_MS`（默认 120000）、`VOICE_MAX_DOWNLOADS`（默认每个数据集最多 3 次并发下载）。
+
+注意：缓存配额按数据集实例分别计算。Compose 的 `/tmp` 容量为 768 MiB，实际配置的仓库数量、缓存上限与运行内存必须一起核算；缓存不是永久存储。
 
 读接口：`/api/v1/audio/games`、`/health?game=<id>`、`/characters?game=<id>`、`/clips?game=<id>&character=<角色>&page=1&limit=20`、`/voice?game=<id>&character=<角色>&language=zh&clip_id=<64位ID>`。绝不把 Token 放入浏览器链接中。若 Space 本身为私有，浏览器还必须有对应平台权限。
 
