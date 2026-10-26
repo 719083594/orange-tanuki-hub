@@ -15,3 +15,6 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Compose normally mounts the root filesystem read-only. Audio cache uses ephemeral /tmp.
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=768m,mode=1777

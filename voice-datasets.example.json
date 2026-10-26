@@ -1,0 +1,13 @@
+[
+  {
+    "id": "example",
+    "name": "示例作品",
+    "aliases": [
+      "示例"
+    ],
+    "dataset_id": "your-namespace/your-private-voice-corpus",
+    "revision": "0000000000000000000000000000000000000000",
+    "layout": "character",
+    "index_filename": "api-index.jsonl"
+  }
+]
