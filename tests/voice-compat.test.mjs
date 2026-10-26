@@ -108,6 +108,62 @@ test('not-ready and busy responses retain retry guidance', async t => {
   assert.equal((await response.json()).error.code, 'audio_cache_busy');
 });
 
+test('explicit downloads preserve original bytes, filenames and range support', async t => {
+  const { request } = await fixture(t);
+  const selection = { character: speaker, clip_id: rows[0].source_id };
+  for (const output of ['audio', 'text']) {
+    const expected = output === 'audio' ? wav : Buffer.from('Fixture transcript zh');
+    const filename = output === 'audio' ? 'zh.wav' : 'zh.txt';
+    for (const method of ['GET', 'HEAD']) {
+      const response = await request('voice', { ...selection, output, download: '1' }, { method });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-disposition'), "attachment; filename*=UTF-8''" + filename);
+      assert.equal(Number(response.headers.get('content-length')), expected.length);
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), method === 'HEAD' ? Buffer.alloc(0) : expected);
+    }
+    const inline = await request('voice', { ...selection, output });
+    assert.match(inline.headers.get('content-disposition'), /^inline;/);
+    assert.deepEqual(Buffer.from(await inline.arrayBuffer()), expected);
+  }
+  const range = await request('voice', { ...selection, download: '1' }, { headers: { Range: 'bytes=0-11' } });
+  assert.equal(range.status, 206);
+  assert.match(range.headers.get('content-disposition'), /^attachment;/);
+  assert.equal(range.headers.get('content-range'), 'bytes 0-11/' + wav.length);
+  assert.deepEqual(Buffer.from(await range.arrayBuffer()), wav.subarray(0, 12));
+});
+
+test('random audio redirects retain download intent and selected library', async t => {
+  const { request } = await fixture(t);
+  for (const method of ['GET', 'HEAD']) {
+    const response = await request('voice', { character: speaker, download: '1' }, { method });
+    assert.equal(response.status, 307);
+    const url = new URL(response.headers.get('location'), 'http://localhost');
+    assert.equal(url.searchParams.get('download'), '1');
+    assert.equal(url.searchParams.get('game'), 'fixture');
+    assert.equal(url.searchParams.get('clip_id'), rows[0].source_id);
+    const selected = await request('voice', Object.fromEntries(url.searchParams), { method });
+    assert.equal(selected.status, 200);
+    assert.match(selected.headers.get('content-disposition'), /^attachment;/);
+    await selected.arrayBuffer();
+  }
+});
+
+test('download flags are strict and cannot be duplicated or used on unrelated endpoints', async t => {
+  const { request } = await fixture(t);
+  const selection = { character: speaker, clip_id: rows[0].source_id };
+  for (const download of ['', '0', 'true', '2', '1\r\nUnexpected: injected']) {
+    const response = await request('voice', { ...selection, download });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, 'invalid_request');
+  }
+  const redirect = await request('voice', { ...selection, download: '1' });
+  const duplicated = await fetch(redirect.url + '&download=1');
+  assert.equal(duplicated.status, 400);
+  assert.equal((await duplicated.json()).error.code, 'invalid_request');
+  await redirect.arrayBuffer();
+  assert.equal((await request('clips', { character: speaker, download: '1' })).status, 400);
+});
+
 test('dataset configuration accepts BOM and optional descriptors while retaining the strict allowlist', () => {
   const row = { id: 'fixture', layout: 'character', local_root: tmpdir() };
   const read = value => readVoiceDatasets({ VOICE_DATASETS_JSON: value });

@@ -95,6 +95,8 @@ Compose 使用项目 `.env` 做插值，但只有 `compose.yaml` 显式声明的
 
 读接口：`/api/v1/audio/games`、`/health?game=<id>`、`/characters?game=<id>`、`/clips?game=<id>&character=<角色>&page=1&limit=20`、`/voice?game=<id>&character=<角色>&language=zh&clip_id=<64位ID>`。绝不把 Token 放入浏览器链接中。若 Space 本身为私有，浏览器还必须有对应平台权限。
 
+素材页按作品、角色浏览音频，角色目录支持搜索和分页；也可进入全部音频搜索。每条音频提供试听、下载音频和查看台词。下载链接在原音频地址后添加 `download=1`，服务端返回 `Content-Disposition: attachment`，直接交给浏览器下载；此参数同样支持 TXT。Chrome、Edge 等浏览器是否弹出保存窗口，仍由用户的下载设置决定。
+
 多数据集配置失败时 `configuration_error` 返回 `true`；单个数据集 `unavailable` 不会阻断其他数据集。只读查询无需上传音频。API 参数检验保持严格，URL 尾部不得随意添加 `utm_source` 等未知参数。
 
 注意：公开 GitHub 代码**不等于**公开音频访问授权；如果将应用部署在公共域名，必须先配置独立鉴权层。对于 Space 生产环境，先从独立开发分支验证，再由仓库所有者决定是否替换当前运行版本。

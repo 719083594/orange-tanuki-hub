@@ -384,11 +384,13 @@ export class VoiceService {
           })});
       }
       if(pathname!==AUDIO_PREFIX+'/voice') throw new VoiceError(404,'not_found','请求的资源不存在。');
-      const q=cleanQuery(search,['character','q','language','output','clip_id','seed']);
+      const q=cleanQuery(search,['character','q','language','output','clip_id','seed','download']);
+      if(q.download!==undefined&&q.download!=='1') throw bad('download 只接受 1。');
       const s=resolveSelector(index,q),clip=choose(index,s,q,this.revision);
       const selectionMs=performance.now()-started;
       const params=new URLSearchParams({...(this.config.game&&this.config.game!=='genshin'?{game:this.config.game}:{}),
-        character:s.character,language:s.language,output:s.output,clip_id:clip.id});
+        character:s.character,language:s.language,output:s.output,clip_id:clip.id,
+        ...(q.download==='1'?{download:'1'}:{})});
       const headers={'X-Clip-ID':clip.id,'X-Voice-Language':s.language,'X-Voice-Output':s.output,
         'X-Voice-Character':encodeURIComponent(s.character),'X-Dataset-Revision':this.revision,'Cache-Control':'private, no-store',
         'X-Content-Type-Options':'nosniff'};
@@ -410,7 +412,8 @@ export class VoiceService {
         const size=range?range.end-range.start+1:lease.size;
         res.writeHead(range?206:200,{...headers,ETag:etag,'X-Voice-Cache':lease.cache,
           'Content-Type':s.output==='audio'?'audio/wav':'text/plain; charset=utf-8',
-          'Content-Disposition':"inline; filename*=UTF-8''"+encodeURIComponent(path.posix.basename(relative)),
+          'Content-Disposition':(q.download==='1'?'attachment':'inline')+"; filename*=UTF-8''"+
+            encodeURIComponent(path.posix.basename(relative)).replace(/['()*]/g,c=>'%'+c.charCodeAt(0).toString(16).toUpperCase()),
           'Content-Length':size,...(s.output==='audio'?{'Accept-Ranges':'bytes'}:{}),
           ...(range?{'Content-Range':'bytes '+range.start+'-'+range.end+'/'+lease.size}:{})});
         if(req.method==='HEAD'||!size)res.end();

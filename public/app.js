@@ -50,6 +50,8 @@
   }
   function normalizeAssetParams(params) {
     const query = new URLSearchParams(params);
+    if (query.get('type') && query.get('type') !== 'audio') query.delete('view');
+    else if (query.has('view') && !['works', 'characters', 'clips'].includes(query.get('view'))) query.delete('view');
     if (query.get('type') !== 'image') query.delete('image_scope');
     else {
       query.delete('language'); query.delete('emotion');
@@ -111,10 +113,45 @@
     if (!Array.isArray(files) || !files.length) return '—';
     return files.map(file => `${file.storage_key}${typeof file.size_bytes === 'number' ? ` (${number(file.size_bytes)} B)` : ''}`).join('；');
   }
+  function voiceURL(value, output) {
+    if (typeof value !== 'string' || !value.startsWith('/api/v1/audio/voice?')) return null;
+    try {
+      const url = new URL(value, location.origin);
+      const allowed = ['game', 'character', 'language', 'output', 'clip_id'];
+      if (url.origin !== location.origin || url.pathname !== '/api/v1/audio/voice' || url.hash ||
+          url.searchParams.get('output') !== output || [...url.searchParams.keys()].some(key =>
+            !allowed.includes(key) || url.searchParams.getAll(key).length !== 1)) return null;
+      return url;
+    } catch { return null; }
+  }
   function audioPlayer(row) {
-    if (row.type !== 'audio' || typeof row.play_url !== 'string' ||
-        !row.play_url.startsWith('/api/v1/audio/voice?')) return '';
-    return `<div class="voice-preview"><audio controls preload="none" src="${esc(row.play_url)}">浏览器不支持音频播放。</audio><a href="${esc(row.play_url)}" target="_blank" rel="noopener">打开 / 下载音频</a></div>`;
+    if (row.type !== 'audio') return '';
+    const play = voiceURL(row.play_url, 'audio');
+    if (!play) return '<p class="voice-note">此条目尚未配置试听文件。</p>';
+    const download = new URL(play); download.searchParams.set('download', '1');
+    const filename = String(row.title || row.id || 'audio').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') + '.wav';
+    const text = voiceURL(row.text_url, 'text');
+    return `<div class="voice-preview"><audio controls preload="none" aria-label="试听：${esc(row.title || '音频')}" src="${esc(play.pathname + play.search)}">浏览器不支持音频播放。</audio><div class="voice-actions"><a class="button small voice-download" href="${esc(download.pathname + download.search)}" download="${esc(filename)}">下载音频</a>${text ? `<details class="voice-transcript" data-text-url="${esc(text.pathname + text.search)}"><summary class="button small">查看台词</summary><div class="voice-transcript-body" aria-live="polite">展开后读取配对文本。</div></details>` : ''}</div></div>`;
+  }
+
+  async function showTranscript(details) {
+    if (!details.open || details.dataset.loaded || details.dataset.loading) return;
+    const url = voiceURL(details.dataset.textUrl, 'text');
+    if (!url) return;
+    const body = details.querySelector('.voice-transcript-body');
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
+    details.dataset.loading = 'true'; body.textContent = '正在读取台词…';
+    try {
+      const response = await fetch(url.pathname + url.search, { signal: controller.signal, cache: 'no-store', headers: { Accept: 'text/plain' } });
+      if (!response.ok || !response.headers.get('content-type')?.startsWith('text/plain')) throw new Error('暂时无法读取台词，请收起后重试。');
+      if (Number(response.headers.get('content-length')) > 1024 * 1024) throw new Error('文本过长，暂不在页面展开。');
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength > 1024 * 1024) throw new Error('文本过长，暂不在页面展开。');
+      body.textContent = new TextDecoder('utf-8', { fatal: true }).decode(bytes) || '这份配对文本为空。';
+      details.dataset.loaded = 'true';
+    } catch (error) {
+      body.textContent = error.name === 'AbortError' ? '读取超时，请收起后重试。' : '暂时无法读取台词，请收起后重试。';
+    } finally { clearTimeout(timer); delete details.dataset.loading; }
   }
 
   function statsCards() {
@@ -167,11 +204,117 @@
     const rest = await Promise.all(pages.map(page => request(base + '&page=' + page).then(listResult)));
     return {...first, data: first.data.concat(...rest.map(r => r.data))};
   }
+  function assetTypeTabs(selected) {
+    return `<div class="type-tabs" aria-label="素材类型">${types.map(([type, name, symbol]) => `<button class="type-tab${selected === type ? ' active' : ''}" type="button" data-type="${type}" aria-pressed="${selected === type}">${icon(symbol)}${name}<span data-type-count="${type}">${number(typeCount(type))}</span></button>`).join('')}</div>`;
+  }
+  async function findDirectoryRecord(kind, id) {
+    if (!id) return null;
+    const result = listResult(await request(`/api/v1/${kind}?${new URLSearchParams({ q: id, page_size: '100' })}`));
+    rememberNames(kind, result.data);
+    return result.data.find(row => row.id === id) || null;
+  }
+  function audioBreadcrumbs(work, character, current) {
+    const parts = [`<a href="${routeURL('assets', { type: 'audio' })}">全部作品</a>`];
+    if (work) parts.push(`<a href="${routeURL('assets', { type: 'audio', work: work.id, view: 'characters' })}">${esc(work.name)}</a>`);
+    if (character) parts.push(`<span aria-current="page">${esc(character.name)}</span>`);
+    else if (current) parts.push(`<span aria-current="page">${esc(current)}</span>`);
+    return `<nav class="audio-breadcrumbs" aria-label="音频目录">${parts.join(`<span class="audio-breadcrumb-separator" aria-hidden="true">/</span>`)}</nav>`;
+  }
+  function mediaCards(result, filtered) {
+    if (!result.data.length) return empty(filtered ? '没有找到匹配的素材' : '暂时没有可浏览的音频', '可以调整关键词与语言，或返回角色目录重新选择。', 'audio', '', true);
+    const languageNames = { zh: '中文', en: '英语', ja: '日语', ko: '韩语' };
+    return `<div class="audio-clip-grid">${result.data.map(row => {
+      const work = row.work_name || state.workNames.get(row.work_id);
+      const character = row.character_name || state.characterNames.get(row.character_id);
+      const relatedType = ['audio', 'image', 'model'].includes(row.type) ? row.type : '';
+      const related = row.character_id ? routeURL('assets', { type: relatedType, work: row.work_id, character: row.character_id, ...(row.type === 'image' ? { image_scope: row.image_scope } : {}) }) : '';
+      return `<article class="audio-clip-card"><div class="audio-clip-heading"><span class="audio-card-icon">${icon(row.type === 'audio' ? 'audio' : row.type === 'image' ? 'image' : 'library')}</span><h3>${esc(row.title || row.id)}</h3></div><div class="audio-clip-meta">${work ? `<a href="${routeURL('assets', { type: relatedType, work: row.work_id, ...(row.type === 'audio' ? { view: 'characters' } : {}) })}">${esc(work)}</a>` : ''}${character ? `<a href="${related}">${esc(character)}</a>` : ''}${row.type === 'image' && row.image_scope === 'standalone' ? '<span class="chip">独立图片</span>' : ''}<span class="chip">${esc(row.type === 'audio' ? languageNames[row.language] || row.language || '音频' : ({ image: '图片', model: '模型', text: '文本', video: '视频' })[row.type] || row.type)}</span></div>${audioPlayer(row)}</article>`;
+    }).join('')}</div>${pagination(result.meta)}`;
+  }
+  async function renderAudioBrowser(sequence, params) {
+    const selectedType = params.get('type') || '';
+    const requestedView = params.get('view'), selectedWork = params.get('work'), selectedCharacter = params.get('character');
+    const hasClipFilters = ['q', 'language', 'emotion', 'category'].some(key => params.get(key));
+    const view = selectedCharacter ? 'clips' : ['works', 'characters', 'clips'].includes(requestedView) ? requestedView :
+      hasClipFilters ? 'clips' : selectedWork ? 'characters' : 'works';
+    const allTypesSearch = !selectedType && params.get('q') && !selectedCharacter && requestedView !== 'clips';
+    main.innerHTML = heading('素材浏览', '先选择作品与角色，再试听或下载需要的音频。', 'EXPLORE YOUR LIBRARY') +
+      `<section class="card filter-panel">${assetTypeTabs(selectedType)}</section><section class="card">${loading()}</section>`;
+    const query = new URLSearchParams({ page_size: '24' });
+    let endpoint;
+    if (view === 'clips') {
+      endpoint = 'assets';
+      if (!allTypesSearch) query.set('type', 'audio');
+      for (const key of ['q', 'work', 'character', 'language', 'emotion', 'category', 'page']) if (params.get(key)) query.set(key, params.get(key));
+    } else {
+      endpoint = view === 'works' ? 'works' : 'characters';
+      for (const key of ['q', 'page']) if (params.get(key)) query.set(key, params.get(key));
+      if (view === 'characters' && selectedWork) query.set('work', selectedWork);
+    }
+    const results = await Promise.allSettled([
+      request(`/api/v1/${endpoint}?${query}`).then(listResult),
+      findDirectoryRecord('works', selectedWork), findDirectoryRecord('characters', selectedCharacter)
+    ]);
+    if (!active(sequence)) return;
+    let work = results[1].status === 'fulfilled' ? results[1].value : null;
+    let character = results[2].status === 'fulfilled' ? results[2].value : null;
+    const result = results[0].status === 'fulfilled' ? results[0].value : null;
+    if (result) {
+      if (view !== 'clips') rememberNames(endpoint, result.data);
+      else for (const row of result.data) {
+        if (row.work_id && row.work_name) state.workNames.set(row.work_id, row.work_name);
+        if (row.character_id && row.character_name) state.characterNames.set(row.character_id, row.character_name);
+      }
+      if (view === 'clips') {
+        const missing = new Map();
+        for (const row of result.data) {
+          if (row.work_id && !state.workNames.has(row.work_id)) missing.set('works:' + row.work_id, ['works', row.work_id]);
+          if (row.character_id && !state.characterNames.has(row.character_id)) missing.set('characters:' + row.character_id, ['characters', row.character_id]);
+        }
+        await Promise.allSettled([...missing.values()].map(([kind, id]) => findDirectoryRecord(kind, id)));
+        if (!active(sequence)) return;
+      }
+      const first = result.data.find(row => row.character_id === selectedCharacter);
+      if (!character && selectedCharacter && first?.character_name) character = { id: selectedCharacter, name: first.character_name, work_id: first.work_id };
+      if (!work && first?.work_name) work = { id: first.work_id, name: first.work_name };
+    }
+    if (!work && character?.work_id) {
+      try { work = await findDirectoryRecord('works', character.work_id); } catch { /* Keep the usable clip results. */ }
+      if (!active(sequence)) return;
+    }
+    if (!work && selectedWork) work = { id: selectedWork, name: state.workNames.get(selectedWork) || '当前作品' };
+    if (!character && selectedCharacter) character = { id: selectedCharacter, name: state.characterNames.get(selectedCharacter) || '当前角色' };
+    const title = view === 'works' ? '按作品浏览音频' : view === 'characters' ? `${work?.name || '全部作品'} · 角色目录` :
+      character ? `${character.name}的音频` : allTypesSearch ? '素材搜索结果' : params.get('q') ? '音频搜索结果' : `${work?.name || '全部作品'}的音频`;
+    const description = view === 'works' ? '从作品进入角色目录；图片与模型也可以切换分类查看。' : view === 'characters' ?
+      '搜索角色名称，选择一个角色查看其音频。' : '每条音频都可以直接试听、下载，或展开查看配对台词。';
+    const directoryContext = { directory_q: params.get('directory_q') || '', directory_page: params.get('directory_page') || '' };
+    const roleParams = { type: 'audio', view: 'characters', ...(work ? { work: work.id } : {}), q: directoryContext.directory_q, page: directoryContext.directory_page };
+    const back = view === 'works' ? '' : `<a class="button small" href="${routeURL('assets', view === 'characters' ? { type: 'audio' } : roleParams)}">${view === 'characters' ? '返回作品列表' : '返回角色列表'}</a>`;
+    const allAudio = `<a class="button small" href="${routeURL('assets', { type: 'audio', view: 'clips', ...(work ? { work: work.id } : {}), ...directoryContext })}">${work ? '此作品全部音频' : '全部音频'}</a>`;
+    let controls, content;
+    if (view !== 'clips') {
+      const label = view === 'works' ? '作品' : '角色';
+      controls = `<div class="audio-directory-toolbar"><form id="audio-directory-search" class="inline-search" data-directory-view="${view}"><input name="q" aria-label="搜索${label}名称" value="${esc(params.get('q') || '')}" placeholder="搜索${label}名称…"><button type="submit" class="button">${icon('search')}搜索</button></form><div class="audio-directory-actions">${back}${allAudio}</div></div>`;
+      content = !result ? errorPanel(results[0].reason) : `<div class="result-toolbar"><span>共 <strong>${number(result.meta.total)}</strong> 个${label}</span><span>每页 ${number(result.meta.page_size)} 个</span></div>` +
+        (!result.data.length ? empty(params.get('q') ? `没有匹配的${label}` : `暂时没有${label}`, '请尝试其他关键词，或返回上一级目录。', view === 'works' ? 'folder' : 'person', '', true) :
+          `<div class="audio-directory-grid">${result.data.map(row => {
+            const target = view === 'works' ? { type: 'audio', work: row.id, view: 'characters' } : { type: 'audio', work: row.work_id, character: row.id, directory_q: params.get('q') || '', directory_page: params.get('page') || '' };
+            return `<a class="audio-directory-card" href="${routeURL('assets', target)}"><span class="audio-directory-icon">${icon(view === 'works' ? 'folder' : 'person')}</span><h3>${esc(row.name || row.id)}</h3><p>${view === 'works' ? '选择角色，浏览音频' : esc(work?.name || state.workNames.get(row.work_id) || '角色音频')}</p><span class="audio-directory-open">${view === 'works' ? '查看角色' : '浏览音频'}${icon('arrow')}</span></a>`;
+          }).join('')}</div>${pagination(result.meta)}`);
+    } else {
+      controls = `<div class="audio-directory-actions audio-list-navigation">${back}${character ? allAudio : ''}</div><form id="audio-filter"><div class="audio-filters"><div class="field"><label for="audio-q">关键词</label><input id="audio-q" name="q" value="${esc(params.get('q') || '')}" placeholder="${character ? '在当前角色中搜索音频名称…' : '搜索名称、角色、作品或标签…'}"></div><div class="field"><label for="audio-language">语言</label><select id="audio-language" name="language">${[['', '全部语言'], ['zh', '中文'], ['en', '英语'], ['ja', '日语'], ['ko', '韩语']].map(([value, label]) => option(value, label, params.get('language') || '')).join('')}</select></div><button class="button primary" type="submit">${icon('search')}搜索${allTypesSearch ? '素材' : '音频'}</button><button class="button text" type="button" data-reset-audio>重置筛选</button></div><details class="audio-more-filters"><summary>更多筛选</summary><div class="audio-extra-filters"><div class="field"><label for="audio-emotion">情绪标签</label><input id="audio-emotion" name="emotion" value="${esc(params.get('emotion') || '')}" placeholder="输入情绪标签"></div><div class="field"><label for="audio-category">分类标签</label><input id="audio-category" name="category" value="${esc(params.get('category') || '')}" placeholder="输入分类标签"></div></div></details></form>`;
+      content = !result ? errorPanel(results[0].reason) : `<div class="result-toolbar"><span>共 <strong>${number(result.meta.total)}</strong> 份${allTypesSearch ? '素材' : '音频'}</span><span>${character ? '当前角色' : work ? '当前作品 · 多个角色' : '跨作品与角色'}</span></div>${mediaCards(result, hasClipFilters)}`;
+    }
+    main.innerHTML = heading(title, description, 'EXPLORE YOUR LIBRARY') + audioBreadcrumbs(work, character, view === 'works' ? '' : view === 'characters' ? '角色目录' : '音频列表') +
+      `<section class="card filter-panel">${assetTypeTabs(selectedType)}${controls}</section><section class="card" id="asset-results">${content}</section>`;
+  }
   async function renderAssets(sequence, params) {
     params = normalizeAssetParams(params);
     const canonical = routeURL('assets', params);
     if (location.hash !== canonical) history.replaceState(null, '', canonical);
     const selectedType = params.get('type') || '';
+    if (!selectedType || selectedType === 'audio') return renderAudioBrowser(sequence, params);
     const imageOnly = selectedType === 'image';
     const standalone = imageOnly && params.get('image_scope') === 'standalone';
     main.innerHTML = heading('素材浏览', '按作品、角色与声音特征，找到你需要的那一份素材。', 'EXPLORE YOUR LIBRARY') +
@@ -332,7 +475,18 @@
   });
   main.addEventListener('submit', event => {
     event.preventDefault(); const { page, params } = route();
-    if (event.target.id === 'asset-filter') {
+    if (event.target.id === 'audio-directory-search') {
+      const next = new URLSearchParams(params), view = event.target.dataset.directoryView;
+      for (const key of ['page', 'character', 'language', 'emotion', 'category']) next.delete(key);
+      if (view === 'works') next.delete('work');
+      next.set('view', view); next.set('q', new FormData(event.target).get('q').trim());
+      navigate('assets', next);
+    } else if (event.target.id === 'audio-filter') {
+      const next = new URLSearchParams(new FormData(event.target));
+      for (const key of ['type', 'work', 'character', 'directory_q', 'directory_page']) if (params.get(key)) next.set(key, params.get(key));
+      if (params.get('view') === 'clips' || params.get('character') || params.get('type') === 'audio' || !next.get('q')) next.set('view', 'clips');
+      navigate('assets', next);
+    } else if (event.target.id === 'asset-filter') {
       const next = new URLSearchParams(new FormData(event.target)); if (params.get('type')) next.set('type', params.get('type')); navigate('assets', next);
     } else if (event.target.id === 'catalog-search' || event.target.id === 'model-search') {
       params.delete('page'); params.set('q', new FormData(event.target).get('q').trim()); navigate(page, params);
@@ -350,11 +504,21 @@
     const { page, params } = route();
     if (target.hasAttribute('data-retry')) render();
     else if (target.hasAttribute('data-clear-filters')) navigate('assets');
-    else if (target.hasAttribute('data-type')) { params.set('type', target.dataset.type); params.delete('page'); if (target.dataset.type !== 'image') params.delete('image_scope'); navigate('assets', params); }
+    else if (target.hasAttribute('data-reset-audio')) {
+      for (const key of ['q', 'language', 'emotion', 'category', 'page']) params.delete(key);
+      params.set('view', 'clips'); navigate('assets', params);
+    }
+    else if (target.hasAttribute('data-type')) { params.set('type', target.dataset.type); params.delete('page'); params.delete('view'); if (target.dataset.type !== 'image') params.delete('image_scope'); navigate('assets', params); }
     else if (target.hasAttribute('data-page')) { params.set('page', target.dataset.page); navigate(page, params); }
     else if (target.hasAttribute('data-copy-base')) copy(`${location.origin}/api/v1`);
     else if (target.hasAttribute('data-copy-request')) copy(`${location.origin}${apiURL()}`);
   });
+  main.addEventListener('toggle', event => {
+    if (event.target.matches?.('.voice-transcript')) showTranscript(event.target);
+  }, true);
+  main.addEventListener('play', event => {
+    if (event.target.tagName === 'AUDIO') main.querySelectorAll('audio').forEach(audio => { if (audio !== event.target) audio.pause(); });
+  }, true);
   window.addEventListener('hashchange', render);
   if (route().page !== 'overview') refreshSummary().catch(() => {});
   render();
