@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { lstat, realpath, open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { readConfig, normalizePublicOrigin } from './config.mjs';
+import { AUDIO_ROUTES, createVoiceServiceFromEnv } from './voice.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const TYPES = new Set(['audio', 'image', 'video', 'text', 'model']);
@@ -183,7 +184,7 @@ function filtered(rows, query) {
     if (query.emotion && !(row.emotions ?? []).includes(query.emotion)) return false;
     if (query.category && !(row.categories ?? []).includes(query.category)) return false;
     if (needle) {
-      const text = [row.id, row.name, row.title, row.description, row.audio_text?.text,
+      const text = [row.id, row.name, row.title, row.description, row.work_name, row.character_name, row.audio_text?.text,
         ...(row.aliases ?? []), ...(row.tags ?? [])].filter(Boolean).join(' ').normalize('NFKC').toLocaleLowerCase();
       if (!text.includes(needle)) return false;
     }
@@ -241,14 +242,22 @@ async function staticFile(req, res, pathname, publicDir) {
 /** Creates a server without listening. Only reads the catalog and public files. */
 export function createServer({ rootDir = ROOT, publicDir = path.join(rootDir, 'public'),
   catalogPath = path.join(rootDir, 'data', 'catalog.json'),
-  openApiPath = path.join(rootDir, 'docs', 'openapi.json'), publicOrigin = null } = {}) {
+  openApiPath = path.join(rootDir, 'docs', 'openapi.json'), publicOrigin = null, voiceService = null } = {}) {
   publicOrigin = normalizePublicOrigin(publicOrigin);
   const catalog = validateCatalog(JSON.parse(readFileSync(catalogPath, 'utf8')));
-  const totals = Object.fromEntries(COLLECTIONS.map((name) => [name, catalog[name].length]));
-  const group = (key) => catalog.assets.reduce((out, asset) => {
-    if (typeof asset[key] === 'string') out[asset[key]] = (out[asset[key]] ?? 0) + 1;
-    return out;
-  }, Object.create(null));
+  const combined = name => {
+    const remote = voiceService?.catalog?.();
+    return remote && Array.isArray(remote[name]) ? catalog[name].concat(remote[name]) : catalog[name];
+  };
+  const summary = () => {
+    const totals = Object.fromEntries(COLLECTIONS.map(name => [name, combined(name).length]));
+    const assets = combined('assets');
+    const countBy = key => assets.reduce((out, asset) => {
+      if (typeof asset[key] === 'string') out[asset[key]] = (out[asset[key]] ?? 0) + 1;
+      return out;
+    }, Object.create(null));
+    return { totals, by_type: countBy('type'), by_language: countBy('language') };
+  };
   const server = http.createServer(async (req, res) => {
     try {
       const { pathname, search } = parseTarget(req);
@@ -265,10 +274,15 @@ export function createServer({ rootDir = ROOT, publicDir = path.join(rootDir, 'p
       }
       if (!['GET', 'HEAD'].includes(req.method)) throw new ApiError(400, 'method_not_allowed', '此入口不支持该请求方法。');
       if (pathname === '/healthz') return json(req, res, 200, { status: 'ok' });
+      if (AUDIO_ROUTES.has(pathname)) {
+        if (!voiceService) return json(req, res, 503, { error: { code: 'audio_not_configured', message: '音频接口尚未配置。' } });
+        return await voiceService.handle(req, res, pathname, search);
+      }
+      // Read-only catalog endpoints see the completed voice index, not a partial scan.
+      if (voiceService && ['/api/v1/info', '/api/v1/stats', '/api/v1/works', '/api/v1/characters', '/api/v1/assets'].includes(pathname)) await voiceService.ready;
       if (pathname === '/api/v1/info') return json(req, res, 200,
-        { data: { ...catalog.hub, api_version: 'v1', storage: catalog.storage, totals } });
-      if (pathname === '/api/v1/stats') return json(req, res, 200,
-        { data: { totals, by_type: group('type'), by_language: group('language') } });
+        { data: { ...catalog.hub, api_version: 'v1', storage: catalog.storage, totals: summary().totals } });
+      if (pathname === '/api/v1/stats') return json(req, res, 200, { data: summary() });
       const lists = {
         '/api/v1/works': ['works', ['q']],
         '/api/v1/characters': ['characters', ['q', 'work']],
@@ -277,12 +291,13 @@ export function createServer({ rootDir = ROOT, publicDir = path.join(rootDir, 'p
       };
       if (Object.hasOwn(lists, pathname)) {
         const [name, allowed] = lists[pathname];
-        return json(req, res, 200, paginated(catalog[name], readQuery(search, allowed)));
+        return json(req, res, 200, paginated(combined(name), readQuery(search, allowed)));
       }
       const assetMatch = /^\/api\/v1\/assets\/([^/]+)$/.exec(pathname);
       if (assetMatch) {
         if (!ID.test(assetMatch[1])) throw invalid('资源 ID 无效。');
-        const asset = catalog.assets.find((row) => row.id === assetMatch[1]);
+        if (voiceService) await voiceService.ready;
+        const asset = combined('assets').find((row) => row.id === assetMatch[1]);
         if (!asset) throw missing();
         return json(req, res, 200, { data: asset });
       }
@@ -311,7 +326,7 @@ export function createServer({ rootDir = ROOT, publicDir = path.join(rootDir, 'p
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const { port, host, catalogPath, publicOrigin } = readConfig();
-    const server = createServer({ catalogPath, publicOrigin });
+    const server = createServer({ catalogPath, publicOrigin, voiceService: createVoiceServiceFromEnv() });
     server.on('error', (error) => {
       console.error(`OrangeTanuki Hub failed to listen (${error.code ?? 'unknown error'})`);
       process.exitCode = 1;
