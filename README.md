@@ -8,10 +8,11 @@
 
 - 浏览作品、角色、素材、模型及模型版本目录。
 - 通过 JSON API 查询、筛选和分页，查看真实目录统计。
+- 可选接入私有 Hugging Face 音频数据集：索引浏览、角色筛选、在线试听与 WAV/TXT 按需读取；不调用生成模型。
 - 区分角色关联图片与独立图片，记录音频、完整文本及逐句情绪的对应关系。
 - 提供网页、API 接入页面、OpenAPI 文档及健康检查。
 
-这是**结构版**：随仓库提供的五个数据集合均为空，没有导入素材或模型。上传区域仅说明尚未实现的能力；`POST /api/v1/uploads` 返回 `503 storage_not_configured`，不会写入文件。当前没有素材存储、下载传输、数据库、账号登录或模型推理功能；模型目录不等于在线声音生成。
+本仓库的五个本地数据集合默认仍为空。**未配置音频仓库时，首页数字为零是预期结果**；配置有效的只读音频数据集后，现有 WAV 索引会自动加入作品、角色、素材列表及首页统计，并支持在线播放和下载。上传区域仍不可用，`POST /api/v1/uploads` 返回 `503 storage_not_configured`；没有通用写入存储、账号登录或模型推理服务。音色模型目录不等于在线语音生成。
 
 ## 快速运行
 
@@ -61,6 +62,10 @@ Compose 默认把主机 `127.0.0.1:7860` 映射到容器；可用 `HOST_PORT` �
 | `GET /api/v1/assets`、`/api/v1/assets/{id}` | 素材查询与详情 |
 | `GET /api/v1/models`、`/api/v1/models/{id}/versions` | 模型及版本元数据 |
 | `GET /docs/openapi.json` | 完整接口说明 |
+| `GET /api/v1/audio/games` | 查询远程音频仓库加载状态与条目数量 |
+| `GET /api/v1/audio/characters?game=...` | 查询指定作品的音频角色 |
+| `GET /api/v1/audio/clips?game=...&character=...` | 查询指定角色音频，分页 |
+| `GET /api/v1/audio/voice?game=...&character=...&clip_id=...` | 获取已有 WAV 音频（或 output=text 获取对应 TXT） |
 
 例如，`/api/v1/assets?type=image&image_scope=standalone` 只查询独立图片。空目录正常返回空数组和零统计；不存在的详情资源返回 `404`，非法参数返回 `400`。
 
@@ -86,3 +91,17 @@ compose.catalog.yaml        外部目录只读挂载覆盖配置
 本程序没有内置鉴权；`package.json` 的 `private: true` 仅防止误发布 npm 包，不保护运行实例。迁出私有 Space 后，平台原有访问控制不会随源码迁移。对外部署前应由平台或反向代理提供所需鉴权；`PUBLIC_ORIGIN` 也不是鉴权开关。
 
 不要将真实素材、私有目录、运行记录或凭据加入源码版本库。新增目录数据须遵循 [OpenAPI 数据结构](docs/openapi.json)，而不是把文件放进 `public/` 来模拟已实现存储。
+
+
+## 私有仓库音频接入
+
+此项目只有**通用读接口**，不包含用户的 Hugging Face 私有数据集清单、音频文件或 Token。
+
+- 通过私有环境变量 `VOICE_HF_TOKEN` 提供只读权限，不要上传到 GitHub，也不要发送到聊天。
+- 单一默认仓库使用 `VOICE_DATASET_ID` 和固定 40 位 `VOICE_DATASET_REVISION`。
+- 多个仓库使用 `VOICE_DATASETS_JSON`（数组），参考 `voice-datasets.example.json`；或在私有运行环境提供未跟踪的 `voice-datasets.json`。
+- 默认缓存位于临时目录，数据按需下载；浏览目录不需要下载全部 WAV，也不需要 GPU。
+- 模型和 Dataset 仍为原始私有资源。部署为公开网站前必须配置服务端鉴权，否则接口会向访客提供可以检索和播放的内容。
+- 如需更新数据集版本，应先验证新版 `api-index.jsonl`；仅修改 `revision` 不会自动产生有效索引。
+
+首次部署请检查 `GET /api/v1/audio/games` 是否显示各作品 `ready` 及正确数量，再检查 `/api/v1/stats` 与页面在线试听。详细配置见 [配置说明](docs/configuration.md)。
