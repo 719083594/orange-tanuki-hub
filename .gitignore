@@ -13,3 +13,7 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+
+# Private dataset mappings and local audio cache
+voice-datasets.json
+.orange-tanuki-voice/
