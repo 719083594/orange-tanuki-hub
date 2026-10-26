@@ -2,7 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { createReadStream, readFileSync } from 'node:fs';
-import { mkdir, readFile, realpath, stat, open, rename, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, stat, lstat, open, rename, rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 
 export const AUDIO_PREFIX = '/api/v1/audio';
@@ -27,6 +27,10 @@ const boundedInt = (raw, fallback, maximum, name) => {
   const value = raw === undefined ? String(fallback) : String(raw);
   if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value)>maximum) throw new Error('Invalid '+name);
   return Number(value);
+};
+const queryInt = (raw, fallback, maximum, name) => {
+  try { return boundedInt(raw, fallback, maximum, name); }
+  catch { throw bad(name+' 必须是 1 到 '+maximum+' 之间的整数。'); }
 };
 function inside(root, file) {
   const rel=path.relative(root,file);
@@ -198,8 +202,26 @@ class DiskCache {
     this.config=config;this.fetchImpl=fetchImpl;this.entries=new Map();this.inflight=new Map();this.total=0;
     this.root=path.join(config.cacheRoot,sha256(config.datasetId+'@'+config.revision).slice(0,16));
     this.hits=0;this.misses=0;this.gate=new Semaphore(config.maxDownloads||3);
+    this.commitGate=new Semaphore(1);
   }
-  async initialize() {await mkdir(this.root,{recursive:true});this.root=await realpath(this.root);}
+  async initialize() {
+    // Each running process must own its cache root; shared-process directories
+    // cannot coordinate reader pins or quota. Do not clean another process's .part files.
+    await mkdir(this.config.cacheRoot,{recursive:true});
+    const base=await realpath(this.config.cacheRoot);
+    this.root=path.join(base,sha256(this.config.datasetId+'@'+this.config.revision).slice(0,16));
+    await mkdir(this.root,{recursive:true});
+    if (!(await lstat(this.root)).isDirectory()) throw unavailable();
+    for (const item of await readdir(this.root,{withFileTypes:true})) {
+      if (!/^[a-f0-9]{64}\.(wav|txt)$/.test(item.name)||!item.isFile()) continue;
+      const file=path.join(this.root,item.name),info=await lstat(file);
+      if (!info.isFile()) continue; // lstat never follows a cached-file symlink.
+      this.entries.set(item.name,{file,size:info.size,pins:0,
+        used:Math.max(info.atimeMs,info.mtimeMs)});
+      this.total+=info.size;
+    }
+    await this.evictToFit(0);
+  }
   async acquire(relative) {
     const name=sha256(this.config.datasetId+'@'+this.config.revision+'\0'+relative)+path.posix.extname(relative);
     if (this.entries.has(name)) {
@@ -213,21 +235,26 @@ class DiskCache {
     const task=this.load(name,relative);
     this.inflight.set(name,task);
     try {
-      const e=await task;e.pins++;return this.lease(e,'miss');
+      const e=await task;return this.lease(e,'miss');
     } finally {this.inflight.delete(name);}
   }
   async load(name,relative) {
     await this.gate.take();
     try {
-    const buffer=await fetchHubFile(this.config,relative,this.config.maxFileBytes,this.fetchImpl);
+      const buffer=await fetchHubFile(this.config,relative,this.config.maxFileBytes,this.fetchImpl);
+      // Downloads may overlap; quota checks, eviction and disk commits must not.
+      await this.commitGate.take();
+      try { return await this.commit(name,buffer); }
+      finally { this.commitGate.release(); }
+    } finally { this.gate.release(); }
+  }
+  async commit(name,buffer) {
+    // A failed eviction may have restored an entry while this download ran.
+    const existing=this.entries.get(name);
+    if(existing) {existing.pins++;existing.used=Date.now();return existing;}
     const size=buffer.length;
     if (size>this.config.cacheBytes) throw unavailable();
-    for (const [key,e] of [...this.entries].sort((a,b)=>a[1].used-b[1].used)) {
-      if (this.total+size<=this.config.cacheBytes) break;
-      if (e.pins) continue;
-      this.entries.delete(key);this.total-=e.size;
-      await rm(e.file,{force:true});
-    }
+    await this.evictToFit(size);
     if (this.total+size>this.config.cacheBytes) throw new VoiceError(503,'audio_cache_busy','音频缓存繁忙。');
     const temporary=path.join(this.root,randomUUID()+'.part'),file=path.join(this.root,name);
     try {
@@ -235,9 +262,25 @@ class DiskCache {
       try {await handle.writeFile(buffer);} finally {await handle.close();}
       await rename(temporary,file);
     } finally {await rm(temporary,{force:true}).catch(()=>{});}
-    const e={file,size,pins:0,used:Date.now()};
+    // Reserve the initiating reader's pin before releasing the commit lock.
+    // Failed writes never enter the map or consume quota.
+    const e={file,size,pins:1,used:Date.now()};
     this.entries.set(name,e);this.total+=size;return e;
-    } finally { this.gate.release(); }
+  }
+  async evictToFit(additional) {
+    const candidates=[...this.entries].map(([key,e])=>({key,e,
+      invalid:e.size>this.config.maxFileBytes||(!e.size&&key.endsWith('.wav'))}));
+    // Drop unusable old files before evicting valid entries for capacity.
+    candidates.sort((a,b)=>Number(b.invalid)-Number(a.invalid)||a.e.used-b.e.used||a.key.localeCompare(b.key));
+    for (const {key,e,invalid} of candidates) {
+      if (!invalid&&this.total+additional<=this.config.cacheBytes) continue;
+      if (e.pins) continue;
+      // Hide the entry before unlinking so a new reader cannot pin it mid-eviction.
+      this.entries.delete(key);
+      try { await rm(e.file,{force:true}); }
+      catch(error) { this.entries.set(key,e);throw error; }
+      this.total-=e.size;
+    }
   }
   lease(e,cache) {
     let closed=false;
@@ -314,7 +357,7 @@ export class VoiceService {
       if(pathname===AUDIO_PREFIX+'/clips') {
         const q=cleanQuery(search,['character','language','page','limit']);
         const character=q.character?.trim()||'',language=normalized(q.language||'zh',LANG_ALIASES,'语言');
-        const page=boundedInt(q.page,1,1000000,'page'),limit=boundedInt(q.limit,20,100,'limit');
+        const page=queryInt(q.page,1,1000000,'page'),limit=queryInt(q.limit,20,100,'limit');
         const ids=index.group(character,language);
         return send(req,res,200,{character,language,page,limit,total:ids.length,
           clips:ids.slice((page-1)*limit,page*limit).map(id=>{

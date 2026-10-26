@@ -105,3 +105,5 @@ compose.catalog.yaml        外部目录只读挂载覆盖配置
 - 如需更新数据集版本，应先验证新版 `api-index.jsonl`；仅修改 `revision` 不会自动产生有效索引。
 
 首次部署请检查 `GET /api/v1/audio/games` 是否显示各作品 `ready` 及正确数量，再检查 `/api/v1/stats` 与页面在线试听。详细配置见 [配置说明](docs/configuration.md)。
+
+部署前可按[私有音频验收](docs/private-audio-verification.md)运行隔离的只读检查，核对索引、统计、分页及每个作品的一组 WAV/TXT；脚本结果不代替电脑和手机试听。

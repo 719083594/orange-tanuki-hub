@@ -91,6 +91,8 @@ Compose 使用项目 `.env` 做插值，但只有 `compose.yaml` 显式声明的
 
 注意：缓存配额按数据集实例分别计算。Compose 的 `/tmp` 容量为 768 MiB，实际配置的仓库数量、缓存上限与运行内存必须一起核算；缓存不是永久存储。
 
+每个运行进程必须使用独立的 `VOICE_CACHE_DIR`，不要让多个实例并发写同一目录。重启时会恢复当前数据集版本中已完成缓存文件的容量统计，并根据文件时间淘汰超额文件；符号链接、子目录、未识别文件及遗留 `.part` 文件不会被当作已完成缓存处理。异常终止留下的临时文件应由运行环境按临时文件策略清理，缓存配额不代替磁盘或容器容量上限。
+
 读接口：`/api/v1/audio/games`、`/health?game=<id>`、`/characters?game=<id>`、`/clips?game=<id>&character=<角色>&page=1&limit=20`、`/voice?game=<id>&character=<角色>&language=zh&clip_id=<64位ID>`。绝不把 Token 放入浏览器链接中。若 Space 本身为私有，浏览器还必须有对应平台权限。
 
 多数据集配置失败时 `configuration_error` 返回 `true`；单个数据集 `unavailable` 不会阻断其他数据集。只读查询无需上传音频。API 参数检验保持严格，URL 尾部不得随意添加 `utm_source` 等未知参数。
