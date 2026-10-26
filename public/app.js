@@ -19,7 +19,7 @@
 
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
-  const workIcons = new Map(['genshin', 'sanguosha', 'starrail', 'zzz', 'bh3'].map(game => [`voice_${game}`, `/game-icons/${game}.png`]));
+  const workIcons = new Map(['genshin', 'sanguosha', 'starrail', 'zzz', 'bh3'].map(game => [`voice_${game}`, `/game-icons/${game}.${game === 'sanguosha' ? 'jpg' : 'png'}`]));
   const workIcon = row => workIcons.has(row.id) ? `<img class="work-game-icon" src="${workIcons.get(row.id)}" alt="" width="72" height="72" loading="lazy" decoding="async">` : icon('folder');
   const number = value => typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('zh-CN') : '—';
   const active = sequence => sequence === state.sequence;
