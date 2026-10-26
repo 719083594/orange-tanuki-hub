@@ -5,7 +5,7 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0
 
 WORKDIR /app
-COPY --chown=node:node package.json config.mjs server.mjs ./
+COPY --chown=node:node package.json config.mjs server.mjs voice.mjs ./
 COPY --chown=node:node public/ ./public/
 COPY --chown=node:node data/ ./data/
 COPY --chown=node:node docs/openapi.json ./docs/openapi.json
