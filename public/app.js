@@ -12,6 +12,8 @@
     ['/api/v1/works', '作品目录', '查看已入库的作品，支持关键词搜索。'],
     ['/api/v1/characters', '角色目录', '按作品或关键词查找角色。'],
     ['/api/v1/models', '音色模型', '查看模型索引与关联信息。'],
+    ['/api/v1/audio/games', '音频作品', '列出可用游戏、角色数量和音频索引状态。'],
+    ['/api/v1/audio/characters', '音频角色', '传 game 参数查询已加载角色和音频数量。'],
     ['/healthz', '服务状态', '检查当前同源服务是否可用。']
   ];
 
@@ -109,9 +111,15 @@
     if (!Array.isArray(files) || !files.length) return '—';
     return files.map(file => `${file.storage_key}${typeof file.size_bytes === 'number' ? ` (${number(file.size_bytes)} B)` : ''}`).join('；');
   }
+  function audioPlayer(row) {
+    if (row.type !== 'audio' || typeof row.play_url !== 'string' ||
+        !row.play_url.startsWith('/api/v1/audio/voice?')) return '';
+    return `<div class="voice-preview"><audio controls preload="none" src="${esc(row.play_url)}">浏览器不支持音频播放。</audio><a href="${esc(row.play_url)}" target="_blank" rel="noopener">打开 / 下载音频</a></div>`;
+  }
+
   function statsCards() {
     const values = [
-      ['全部素材', state.stats?.totals.assets, 'library', '已入库的资源文件'],
+      ['全部素材', state.stats?.totals.assets, 'library', '本地与远程索引素材'],
       ['音频素材', typeCount('audio'), 'audio', '声音、对白与片段'],
       ['图片素材', typeCount('image'), 'image', '图像与视觉参考'],
       ['音色模型', state.stats?.totals.models, 'model', '模型索引与版本']
@@ -127,18 +135,18 @@
   }
   function assetAssociation(row) {
     if (row.type === 'image' && row.image_scope === 'standalone') return '<span class="chip">独立图片</span>';
-    const association = `${esc(workName(row.work_id))} / ${esc(characterName(row.character_id))}`;
+    const association = `${esc(row.work_name || workName(row.work_id))} / ${esc(row.character_name || characterName(row.character_id))}`;
     if (row.type === 'image') return row.image_scope === 'character' ? `<span class="chip">角色关联</span><br>${association}` : '图片归属未设置';
     return association;
   }
   function assetTable(result, filtered = false, recent = false, imageOnly = false) {
-    if (!result.data.length) return empty(filtered ? '没有找到匹配的素材' : '这里，等待你的第一份收藏', filtered ? '试试其他关键词，或清除筛选条件。' : '资料库目前为空。存储接入后，你的声音与影像将在这里有序呈现。', 'library', filtered ? '<button class="button small" data-clear-filters>清除筛选</button>' : (recent ? arrowLink('#/upload', '了解入库方式') : ''), !recent);
-    return `<div class="table-wrap"><table><thead><tr><th>素材名称</th><th>类型</th><th>归属</th>${imageOnly ? '' : '<th>语言</th><th>情绪</th>'}</tr></thead><tbody>${result.data.map(row => `<tr><td><strong>${esc(row.title || row.id)}</strong></td><td>${esc(({ audio: '音频', image: '图片', model: '音色模型', video: '视频', text: '文本' })[row.type] || row.type || '—')}</td><td>${assetAssociation(row)}</td>${imageOnly ? '' : `<td>${row.type === 'image' ? '不适用' : esc(row.language || '—')}</td><td>${row.type === 'image' ? '不适用' : esc(joined(row.emotions))}</td>`}</tr>`).join('')}</tbody></table></div>${pagination(result.meta)}`;
+    if (!result.data.length) return empty(filtered ? '没有找到匹配的素材' : '这里，等待你的第一份收藏', filtered ? '试试其他关键词，或清除筛选条件。' : '资料库目前为空。配置已有音频数据集后即可按角色检索和试听，无需重复上传文件。', 'library', filtered ? '<button class="button small" data-clear-filters>清除筛选</button>' : (recent ? arrowLink('#/upload', '了解入库方式') : ''), !recent);
+    return `<div class="table-wrap"><table><thead><tr><th>素材名称</th><th>类型</th><th>归属</th>${imageOnly ? '' : '<th>语言</th><th>情绪</th>'}</tr></thead><tbody>${result.data.map(row => `<tr><td><strong>${esc(row.title || row.id)}</strong>${audioPlayer(row)}</td><td>${esc(({ audio: '音频', image: '图片', model: '音色模型', video: '视频', text: '文本' })[row.type] || row.type || '—')}</td><td>${assetAssociation(row)}</td>${imageOnly ? '' : `<td>${row.type === 'image' ? '不适用' : esc(row.language || '—')}</td><td>${row.type === 'image' ? '不适用' : esc(joined(row.emotions))}</td>`}</tr>`).join('')}</tbody></table></div>${pagination(result.meta)}`;
   }
 
   async function renderOverview(sequence) {
     main.innerHTML = heading('总览', '收藏声音与影像，连接你的创作。', 'YOUR CREATIVE SPACE', `<a class="button" href="#/api">${icon('code')}API 接入</a>${arrowLink('#/assets', '浏览素材', true)}`) +
-      `<section class="stats-grid" id="overview-stats" aria-label="资源统计">${statsCards()}</section><div class="overview-grid"><section class="card"><div class="card-header"><div class="section-heading">${icon('library')}<h2>最近入库</h2></div><a class="button text" href="#/assets">查看全部${icon('arrow')}</a></div><div id="recent-content">${loading()}</div></section><section class="card"><div class="card-header"><h2>资源分类</h2><span class="minor-label">按类型探索</span></div><div class="category-list" id="category-content">${catalogRows()}</div></section></div><section class="connection-strip"><span class="connection-symbol">${icon('code')}</span><div><h3>把收藏连接到你的创作流程</h3><p>通过只读 API 获取资源索引，使用真实请求查看返回结果。</p></div><a class="button small" href="#/api">查看 API${icon('arrow')}</a></section>`;
+      `<section class="stats-grid" id="overview-stats" aria-label="资源统计">${statsCards()}</section><div class="overview-grid"><section class="card"><div class="card-header"><div class="section-heading">${icon('library')}<h2>最近入库</h2></div><a class="button text" href="#/assets">查看全部${icon('arrow')}</a></div><div id="recent-content">${loading()}</div></section><section class="card"><div class="card-header"><h2>资源分类</h2><span class="minor-label">按类型探索</span></div><div class="category-list" id="category-content">${catalogRows()}</div></section></div><section class="connection-strip"><span class="connection-symbol">${icon('code')}</span><div><h3>把收藏连接到你的创作流程</h3><p>通过只读 API 获取资源索引，按需试听远程仓库中的现有音频。</p></div><a class="button small" href="#/api">查看 API${icon('arrow')}</a></section>`;
     const results = await Promise.allSettled([refreshSummary(), request('/api/v1/assets?page_size=5').then(listResult)]);
     if (!active(sequence)) return;
     if (results[0].status === 'fulfilled') {
@@ -151,6 +159,14 @@
     document.getElementById('recent-content').innerHTML = results[1].status === 'fulfilled' ? assetTable(results[1].value, false, true) : errorPanel(results[1].reason);
   }
   function option(value, label, selected) { return `<option value="${esc(value)}"${value === selected ? ' selected' : ''}>${esc(label)}</option>`; }
+  async function fetchAllCharacters(workQuery) {
+    const base = '/api/v1/characters?page_size=100' + workQuery;
+    const first = listResult(await request(base));
+    if (first.meta.total_pages <= 1) return first;
+    const pages = Array.from({length: Math.min(first.meta.total_pages, 20) - 1}, (_, i) => i + 2);
+    const rest = await Promise.all(pages.map(page => request(base + '&page=' + page).then(listResult)));
+    return {...first, data: first.data.concat(...rest.map(r => r.data))};
+  }
   async function renderAssets(sequence, params) {
     params = normalizeAssetParams(params);
     const canonical = routeURL('assets', params);
@@ -164,7 +180,7 @@
     const query = new URLSearchParams(); keys.forEach(key => { if (params.get(key)) query.set(key, params.get(key)); });
     const filtered = [...query.keys()].some(key => key !== 'page');
     const workQuery = params.get('work') ? `&work=${encodeURIComponent(params.get('work'))}` : '';
-    const results = await Promise.allSettled([request(`/api/v1/assets?${query}`).then(listResult), request('/api/v1/works?page_size=100').then(listResult), request(`/api/v1/characters?page_size=100${workQuery}`).then(listResult)]);
+    const results = await Promise.allSettled([request(`/api/v1/assets?${query}`).then(listResult), request('/api/v1/works?page_size=100').then(listResult), fetchAllCharacters(workQuery)]);
     if (!active(sequence)) return;
     if (results[1].status === 'fulfilled') rememberNames('works', results[1].value.data);
     if (results[2].status === 'fulfilled') rememberNames('characters', results[2].value.data);
