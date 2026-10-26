@@ -51,7 +51,8 @@ export function readVoiceConfig(env=process.env) {
     cacheRoot:path.resolve(env.VOICE_CACHE_DIR||path.join(os.tmpdir(),'orange-tanuki-voice')),
     maxIndexBytes:boundedInt(env.VOICE_MAX_INDEX_BYTES,256*1024*1024,256*1024*1024,'VOICE_MAX_INDEX_BYTES'),
     maxFileBytes:boundedInt(env.VOICE_MAX_FILE_BYTES,64*1024*1024,1024*1024*1024,'VOICE_MAX_FILE_BYTES'),
-    cacheBytes:boundedInt(env.VOICE_CACHE_MAX_BYTES,512*1024*1024,20*1024*1024*1024,'VOICE_CACHE_MAX_BYTES'),
+    cacheBytes:boundedInt(env.VOICE_CACHE_MAX_BYTES,64*1024*1024,20*1024*1024*1024,'VOICE_CACHE_MAX_BYTES'),
+    maxDownloads:boundedInt(env.VOICE_MAX_DOWNLOADS,3,8,'VOICE_MAX_DOWNLOADS'),
     timeoutMs:boundedInt(env.VOICE_DOWNLOAD_TIMEOUT_MS,120000,600000,'VOICE_DOWNLOAD_TIMEOUT_MS')
   };
   if (!/^[^/\\:\0]+\.jsonl$/.test(config.indexFilename) || config.cacheBytes<config.maxFileBytes) throw new Error('Invalid audio configuration');
@@ -183,11 +184,20 @@ export async function fetchHubFile(config,relative,maxBytes,fetchImpl=fetch) {
   }
   throw unavailable();
 }
+class Semaphore {
+  constructor(limit) { this.limit=limit;this.active=0;this.queue=[]; }
+  async take() {
+    if(this.active<this.limit) {this.active++;return;}
+    if(this.queue.length>=32) throw new VoiceError(503,'audio_cache_busy','音频下载队列繁忙。');
+    await new Promise(resolve=>this.queue.push(resolve));
+  }
+  release() { if(this.queue.length) this.queue.shift()(); else this.active--; }
+}
 class DiskCache {
   constructor(config,fetchImpl) {
     this.config=config;this.fetchImpl=fetchImpl;this.entries=new Map();this.inflight=new Map();this.total=0;
     this.root=path.join(config.cacheRoot,sha256(config.datasetId+'@'+config.revision).slice(0,16));
-    this.hits=0;this.misses=0;
+    this.hits=0;this.misses=0;this.gate=new Semaphore(config.maxDownloads||3);
   }
   async initialize() {await mkdir(this.root,{recursive:true});this.root=await realpath(this.root);}
   async acquire(relative) {
@@ -207,6 +217,8 @@ class DiskCache {
     } finally {this.inflight.delete(name);}
   }
   async load(name,relative) {
+    await this.gate.take();
+    try {
     const buffer=await fetchHubFile(this.config,relative,this.config.maxFileBytes,this.fetchImpl);
     const size=buffer.length;
     if (size>this.config.cacheBytes) throw unavailable();
@@ -225,6 +237,7 @@ class DiskCache {
     } finally {await rm(temporary,{force:true}).catch(()=>{});}
     const e={file,size,pins:0,used:Date.now()};
     this.entries.set(name,e);this.total+=size;return e;
+    } finally { this.gate.release(); }
   }
   lease(e,cache) {
     let closed=false;
