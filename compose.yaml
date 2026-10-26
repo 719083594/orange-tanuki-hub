@@ -17,4 +17,4 @@ services:
       - ALL
     # Compose normally mounts the root filesystem read-only. Audio cache uses ephemeral /tmp.
     tmpfs:
-      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+      - /tmp:rw,nosuid,nodev,size=768m,mode=1777
