@@ -9,9 +9,9 @@ export const AUDIO_PREFIX = '/api/v1/audio';
 export const AUDIO_ROUTES = new Set(['games', 'health', 'characters', 'clips', 'voice'].map(name => AUDIO_PREFIX + '/' + name));
 const LANGUAGES = ['zh', 'en', 'ja', 'ko'];
 const LANG_NAMES = { zh: '中文', en: '英语', ja: '日语', ko: '韩语' };
-const LANG_ALIASES = new Map(Object.entries({ zh:'zh', 'zh-cn':'zh', 中文:'zh', 汉语:'zh', chinese:'zh',
-  en:'en', 英语:'en', english:'en', ja:'ja', jp:'ja', 日语:'ja', japanese:'ja',
-  ko:'ko', 韩语:'ko', korean:'ko' }));
+const LANG_ALIASES = new Map(Object.entries({ zh:'zh', 'zh-cn':'zh', 中文:'zh', 汉语:'zh', 普通话:'zh', chinese:'zh',
+  en:'en', 英语:'en', 英文:'en', english:'en', ja:'ja', jp:'ja', 日语:'ja', 日文:'ja', japanese:'ja',
+  ko:'ko', 韩语:'ko', 韩文:'ko', korean:'ko' }));
 const OUT_ALIASES = new Map(Object.entries({ audio:'audio', wav:'audio', 音频:'audio', 语音:'audio',
   text:'text', txt:'text', 文本:'text', 文字:'text' }));
 const ALIASES = [...LANG_ALIASES.keys(), ...OUT_ALIASES.keys()].sort((a,b) => b.length-a.length);
@@ -23,6 +23,9 @@ export class VoiceError extends Error {
 }
 const bad = (message, code='invalid_request') => new VoiceError(400,code,message);
 const unavailable = () => new VoiceError(502,'audio_file_unavailable','暂时无法读取私有音频素材。');
+class TransientFetchError extends VoiceError {
+  constructor() { super(502,'audio_file_unavailable','暂时无法读取私有音频素材。'); }
+}
 const boundedInt = (raw, fallback, maximum, name) => {
   const value = raw === undefined ? String(fallback) : String(raw);
   if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value)>maximum) throw new Error('Invalid '+name);
@@ -80,6 +83,9 @@ export class VoiceIndex {
       if (audio.slice(0,-4)+'.txt'!==text || this.byId.has(row.source_id) || paths.has(audio) || paths.has(text)) throw new Error('Invalid audio pairing');
       paths.add(audio);paths.add(text);
       const parts=audio.split('/');
+      if (layout==='character_armor_category' &&
+          ((row.armor!==undefined&&row.armor!==parts[1]) || (row.category!==undefined&&row.category!==parts[2])))
+        throw new Error('Invalid audio classification');
       const clip={id:row.source_id,character:row.speaker,language:row.language,audio,textFile:text,
         ...(layout==='character_armor_category'?{armor:parts[1],category:parts[2]}:{})};
       this.byId.set(clip.id,Object.freeze(clip));
@@ -114,7 +120,7 @@ function normalized(value,aliases,name) {
   if (!result) throw bad('未知'+name+'限定词。');
   return result;
 }
-function selector(index,query) {
+export function resolveSelector(index,query) {
   let character=query.character?.trim();
   const langs=new Set(query.language===undefined?[]:[normalized(query.language,LANG_ALIASES,'语言')]);
   const outs=new Set(query.output===undefined?[]:[normalized(query.output,OUT_ALIASES,'输出')]);
@@ -162,7 +168,7 @@ export async function fetchHubFile(config,relative,maxBytes,fetchImpl=fetch) {
       response=await fetchImpl(url,{redirect:'manual',signal,headers:{
         'Accept-Encoding':'identity',...(url.origin==='https://huggingface.co'?{Authorization:'Bearer '+config.token}:{})
       }});
-    } catch {throw unavailable();}
+    } catch {throw new TransientFetchError();}
     if ([301,302,303,307,308].includes(response.status)) {
       const location=response.headers.get('location');await response.body?.cancel();
       if (!location||n===5) throw unavailable();
@@ -171,6 +177,7 @@ export async function fetchHubFile(config,relative,maxBytes,fetchImpl=fetch) {
         !(next.hostname==='huggingface.co'||next.hostname.endsWith('.huggingface.co')||next.hostname.endsWith('.hf.co'))) throw unavailable();
       url=next;continue;
     }
+    if (response.status===429||response.status>=500) {await response.body?.cancel();throw new TransientFetchError();}
     if (response.status!==200||!response.body) {await response.body?.cancel();throw unavailable();}
     const length=response.headers.get('content-length');
     if (length!==null&&(!/^\d+$/.test(length)||BigInt(length)>BigInt(maxBytes))) {await response.body.cancel();throw unavailable();}
@@ -181,7 +188,7 @@ export async function fetchHubFile(config,relative,maxBytes,fetchImpl=fetch) {
         if (size>maxBytes) throw unavailable();
         parts.push(Buffer.from(chunk));
       }
-    } catch {throw unavailable();}
+    } catch(error) {throw error instanceof VoiceError?error:new TransientFetchError();}
     if (length!==null&&size!==Number(length)) throw unavailable();
     if (!size&&!relative.endsWith('.txt')) throw unavailable();
     return Buffer.concat(parts,size);
@@ -307,7 +314,7 @@ function send(req,res,status,value,headers={}) {
   res.end(req.method==='HEAD'?undefined:body);
 }
 export function parseRange(value,size) {
-  if (typeof value!=='string') return null;
+  if (typeof value!=='string'||value.length>200) return null;
   const m=/^bytes=(\d*)-(\d*)$/.exec(value);
   if (!m||(!m[1]&&!m[2])||size<=0) return null;
   const total=BigInt(size);
@@ -324,6 +331,7 @@ export class VoiceService {
     }):Promise.resolve();
   }
   async initialize(fetchImpl) {
+    const started=performance.now();
     let bytes;
     if (this.config.localRoot) {
       const root=await realpath(this.config.localRoot),filename=await realpath(path.join(root,this.config.indexFilename));
@@ -331,22 +339,31 @@ export class VoiceService {
       bytes=await readFile(filename);
       this.store=new LocalStore(root,this.config.maxFileBytes,this.config.layout);
     } else {
-      bytes=await fetchHubFile(this.config,this.config.indexFilename,this.config.maxIndexBytes,fetchImpl);
+      for (let attempt=0;attempt<3;attempt++) {
+        try {bytes=await fetchHubFile(this.config,this.config.indexFilename,this.config.maxIndexBytes,fetchImpl);break;}
+        catch(error) {
+          if (!(error instanceof TransientFetchError)||attempt===2) throw error;
+          await new Promise(resolve=>setTimeout(resolve,attempt===0?1000:3000));
+        }
+      }
       this.store=new DiskCache(this.config,fetchImpl);
       await this.store.initialize();
     }
     this.index=new VoiceIndex(bytes,{layout:this.config.layout});
     this.revision=this.config.localRoot?'local-'+this.index.hash:this.config.revision;
+    this.initializationMs=performance.now()-started;
     this.state='ready';
   }
   async handle(req,res,pathname,search) {
+    const started=performance.now();
     try {
-      if(this.state!=='ready') return send(req,res,503,{error:{code:'audio_'+this.state,message:'音频接口尚未就绪。'}});
+      if(this.state!=='ready') return send(req,res,503,{error:{code:'audio_'+this.state,message:'音频接口尚未就绪。'}},{'Retry-After':'2'});
       const index=this.index;
       if(pathname===AUDIO_PREFIX+'/health') {
         cleanQuery(search,[]);
         return send(req,res,200,{status:'ready',mode:this.config.localRoot?'local':'private_dataset',
-          clips:index.byId.size,characters:index.characters.length,revision:this.revision,cache:this.store.stats()});
+          clips:index.byId.size,characters:index.characters.length,revision:this.revision,
+          initialization_ms:this.initializationMs,cache:this.store.stats()});
       }
       if(pathname===AUDIO_PREFIX+'/characters') {
         cleanQuery(search,[]);
@@ -368,23 +385,27 @@ export class VoiceService {
       }
       if(pathname!==AUDIO_PREFIX+'/voice') throw new VoiceError(404,'not_found','请求的资源不存在。');
       const q=cleanQuery(search,['character','q','language','output','clip_id','seed']);
-      const s=selector(index,q),clip=choose(index,s,q,this.revision);
+      const s=resolveSelector(index,q),clip=choose(index,s,q,this.revision);
+      const selectionMs=performance.now()-started;
       const params=new URLSearchParams({...(this.config.game&&this.config.game!=='genshin'?{game:this.config.game}:{}),
         character:s.character,language:s.language,output:s.output,clip_id:clip.id});
       const headers={'X-Clip-ID':clip.id,'X-Voice-Language':s.language,'X-Voice-Output':s.output,
-        'X-Voice-Character':encodeURIComponent(s.character),'Cache-Control':'private, no-store',
+        'X-Voice-Character':encodeURIComponent(s.character),'X-Dataset-Revision':this.revision,'Cache-Control':'private, no-store',
         'X-Content-Type-Options':'nosniff'};
       if (s.output==='audio'&&q.clip_id===undefined&&q.seed===undefined) {
-        res.writeHead(307,{...headers,Location:AUDIO_PREFIX+'/voice?'+params.toString(),'Content-Length':'0'});return res.end();
+        res.writeHead(307,{...headers,Location:AUDIO_PREFIX+'/voice?'+params.toString(),'Content-Length':'0',
+          'X-Voice-Cache':'not-fetched','Server-Timing':'select;dur='+selectionMs.toFixed(3)});return res.end();
       }
       const relative=s.output==='audio'?clip.audio:clip.textFile;
-      const lease=await this.store.acquire(relative);
+      const fetching=performance.now(),lease=await this.store.acquire(relative);
+      headers['Server-Timing']='select;dur='+selectionMs.toFixed(3)+', fetch;dur='+(performance.now()-fetching).toFixed(3);
       try {
         const etag='"'+sha256(this.revision+'\0'+relative)+'"';
         const range=req.method==='GET'&&s.output==='audio'&&req.headers.range&&
            (!req.headers['if-range']||req.headers['if-range']===etag)?parseRange(req.headers.range,lease.size):undefined;
         if (range===null) {
-          res.writeHead(416,{...headers,'Content-Range':'bytes */'+lease.size,'Content-Length':'0'});return res.end();
+          res.writeHead(416,{...headers,ETag:etag,'Accept-Ranges':'bytes','X-Voice-Cache':lease.cache,
+            'Content-Range':'bytes */'+lease.size,'Content-Length':'0'});return res.end();
         }
         const size=range?range.end-range.start+1:lease.size;
         res.writeHead(range?206:200,{...headers,ETag:etag,'X-Voice-Cache':lease.cache,
@@ -398,7 +419,7 @@ export class VoiceService {
     } catch(error) {
       if(res.headersSent||res.destroyed){res.destroy();return;}
       const safe=error instanceof VoiceError?error:unavailable();
-      send(req,res,safe.status,{error:{code:safe.code,message:safe.message}});
+      send(req,res,safe.status,{error:{code:safe.code,message:safe.message}},safe.status===503?{'Retry-After':'2'}:{});
     }
   }
 }
@@ -409,16 +430,20 @@ export function readVoiceDatasets(env=process.env,{readDefaultConfig=()=>readFil
   else {try {raw=readDefaultConfig();}catch(e){if(e?.code==='ENOENT') return [];throw e;}}
   if(typeof raw!=='string'||raw.length>65536) throw new Error('Invalid voice dataset configuration');
   if(!raw.trim())return [];
-  const rows=JSON.parse(raw);
+  const rows=JSON.parse(raw.replace(/^\uFEFF/,''));
   if(!Array.isArray(rows)||rows.length>8) throw new Error('Invalid voice dataset configuration');
   const seen=new Set(['genshin','原神']);
   return rows.map(row=>{
-    if(!row||typeof row!=='object'||Array.isArray(row)||!/^[a-z][a-z0-9_-]{0,31}$/.test(row.id)||
+    const allowed=['id','name','aliases','dataset_id','revision','layout','index_filename','local_root'];
+    if(!row||typeof row!=='object'||Array.isArray(row)||Object.keys(row).some(key=>!allowed.includes(key))||
+       !/^[a-z][a-z0-9_-]{0,31}$/.test(row.id)||
        !['genshin','character','character_armor_category'].includes(row.layout)||
-       typeof row.name!=='string'||!row.name.trim()||
-       !Array.isArray(row.aliases)||row.aliases.length>8||
-       row.aliases.some(a=>typeof a!=='string'||!a.trim()||a.length>64)) throw new Error('Invalid voice dataset configuration');
-    const names=[row.id,...row.aliases].map(normalizeAlias);
+        (row.name!==undefined&&(typeof row.name!=='string'||!row.name.trim()||row.name!==row.name.trim()||row.name.length>64))||
+        (row.local_root!==undefined&&(typeof row.local_root!=='string'||!path.isAbsolute(row.local_root)))||
+        (row.aliases!==undefined&&(!Array.isArray(row.aliases)||row.aliases.length>8||
+          row.aliases.some(a=>typeof a!=='string'||!a.trim()||a!==a.trim()||a.length>64)))) throw new Error('Invalid voice dataset configuration');
+    const descriptor={id:row.id,name:row.name??row.id,aliases:row.aliases??[]};
+    const names=[descriptor.id,...descriptor.aliases].map(normalizeAlias);
     if(new Set(names).size!==names.length||names.some(a=>seen.has(a))) throw new Error('Duplicate voice game alias');
     for(const name of names)seen.add(name);
     const base=path.resolve(env.VOICE_CACHE_DIR||path.join(os.tmpdir(),'orange-tanuki-voice'));
@@ -426,7 +451,7 @@ export function readVoiceDatasets(env=process.env,{readDefaultConfig=()=>readFil
       VOICE_DATASET_REVISION:row.revision||'',VOICE_INDEX_FILENAME:row.index_filename||'api-index.jsonl',
       VOICE_CACHE_DIR:path.join(base,'games',row.id)});
     if(!config) throw new Error('Incomplete voice dataset configuration');
-    return {id:row.id,name:row.name,aliases:row.aliases,
+    return {...descriptor,
       config:{...config,layout:row.layout,game:row.id}};
   });
 }
@@ -443,6 +468,7 @@ export class VoiceLibraryService {
     this.ready=Promise.all([...this.games.values()].map(g=>g.service.ready));
     this.catalogCache=null;this.catalogSignature='';
   }
+  get state() {return this.games.get('genshin').service.state;}
   catalog() {
     const signature=[...this.games.values()].map(g=>g.id+':'+g.service.state).join('|');
     if(this.catalogCache&&signature===this.catalogSignature)return this.catalogCache;
