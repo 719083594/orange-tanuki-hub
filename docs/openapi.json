@@ -1304,6 +1304,12 @@
               "type": "string"
             },
             "description": "可选固定选段种子；不可与 clip_id 同时提供"
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["1"] },
+            "description": "设为 1 时以附件下载 WAV 或 TXT，保留原文件名；省略则在浏览器内读取。是否询问保存位置由浏览器设置决定。"
           }
         ],
         "responses": {
@@ -1335,7 +1341,7 @@
             }
           },
           "307": {
-            "description": "未指定 clip_id 和 seed 时重定向到选中的稳定 clip_id。"
+            "description": "音频输出未指定 clip_id 和 seed 时重定向到选中的稳定 clip_id，保留 download 参数。"
           },
           "416": {
             "description": "Range 不符合要求。",
