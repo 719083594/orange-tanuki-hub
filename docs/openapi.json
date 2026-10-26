@@ -1865,6 +1865,24 @@
               "standalone"
             ],
             "description": "每个image必填，其他资源禁止此字段。角色图片必须绑定有效角色及其所属作品；独立图片的work_id/character_id必须为null或省略。"
+          },
+          "work_name": {
+            "type": "string",
+            "description": "可选的远程音频作品显示名称（索引产生），不替代 work_id。"
+          },
+          "character_name": {
+            "type": "string",
+            "description": "可选的远程音频角色显示名称（索引产生），不替代 character_id。"
+          },
+          "play_url": {
+            "type": "string",
+            "pattern": "^/api/v1/audio/voice\\?",
+            "description": "仅已配置的只读音频条目包含相对同源的 WAV 访问地址。"
+          },
+          "text_url": {
+            "type": "string",
+            "pattern": "^/api/v1/audio/voice\\?",
+            "description": "仅已配置的只读音频条目包含对应原始 TXT 地址。"
           }
         },
         "required": [
