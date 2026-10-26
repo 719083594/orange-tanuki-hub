@@ -79,3 +79,18 @@ PORT=8788 npm start
 Compose 使用项目 `.env` 做插值，但只有 `compose.yaml` 显式声明的变量会进入容器。`HOST_PORT`、`BIND_ADDRESS` 控制主机映射；容器内部固定使用 `0.0.0.0:7860`。
 
 要使用外部目录，启用 `compose.catalog.yaml` 并设置 `CATALOG_FILE` 为主机文件路径。覆盖配置将文件只读挂载到 `/app/runtime/catalog.json`，并为容器设置 `CATALOG_PATH=/app/runtime/catalog.json`。不要把主机路径直接当成容器路径。完整命令见[部署说明](deployment.md)。
+
+
+## 私有音频数据集（可选只读能力）
+
+先前静态 `data/catalog.json` 的五个集合仍可使用；若配置成功加载远程音频数据集，作品、角色、素材接口及统计将合并对应的虚拟条目。页面只请求已建索引，实际音频在播放时才下载并缓存。
+
+必备：`VOICE_HF_TOKEN`（仅授权访问指定私有 Dataset 的只读 Token）、`VOICE_DATASET_ID`、`VOICE_DATASET_REVISION`（40 位完整 SHA）。多作品需要将一个 JSON 数组放在私有环境变量 `VOICE_DATASETS_JSON` 中，或在运行时提供 `voice-datasets.json`；字段格式见 `voice-datasets.example.json`，不要把真实私有映射提交到公开 GitHub。
+
+可选配置：`VOICE_CACHE_DIR`（默认系统临时目录）、`VOICE_CACHE_MAX_BYTES`（默认 128 MiB）、`VOICE_MAX_FILE_BYTES`（默认 64 MiB）、`VOICE_MAX_INDEX_BYTES`（默认 256 MiB）、`VOICE_DOWNLOAD_TIMEOUT_MS`（默认 120000）。
+
+读接口：`/api/v1/audio/games`、`/health?game=<id>`、`/characters?game=<id>`、`/clips?game=<id>&character=<角色>&page=1&limit=20`、`/voice?game=<id>&character=<角色>&language=zh&clip_id=<64位ID>`。绝不把 Token 放入浏览器链接中。若 Space 本身为私有，浏览器还必须有对应平台权限。
+
+多数据集配置失败时 `configuration_error` 返回 `true`；单个数据集 `unavailable` 不会阻断其他数据集。只读查询无需上传音频。API 参数检验保持严格，URL 尾部不得随意添加 `utm_source` 等未知参数。
+
+注意：公开 GitHub 代码**不等于**公开音频访问授权；如果将应用部署在公共域名，必须先配置独立鉴权层。对于 Space 生产环境，先从独立开发分支验证，再由仓库所有者决定是否替换当前运行版本。
