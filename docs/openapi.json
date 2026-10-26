@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "橙狸集 / OrangeTanuki Hub",
-    "version": "0.1.0",
-    "description": "收藏声音与影像，连接你的创作。当前仅空的只读结构，不导入素材，不提供模型推理、真实上传或下载签发。尚未配置用户鉴权，不应导入私密资源。接口地址相对本站。GET支持HEAD。OPTIONS只接受同源Origin或无Origin，不返回通配CORS；反向代理可显式设置PUBLIC_ORIGIN。错误为JSON。"
+    "version": "0.3.0",
+    "description": "公开代码不携带私有仓库映射和 Token。静态目录默认可以为空；在运行时配置只读 Hugging Face Dataset 后，音频索引合并进作品、角色、素材统计，并允许按需读取已有 WAV/TXT。上传仍不可用，模型目录不等于语音生成。访问私有素材需独立身份认证；GET支持HEAD，OPTIONS不返回通配CORS。"
   },
   "servers": [
     {
@@ -1088,6 +1088,284 @@
         "responses": {
           "200": {
             "description": "与GET相同状态；无响应体。"
+          }
+        }
+      }
+    },
+    "/api/v1/audio/games": {
+      "get": {
+        "summary": "远程音频作品和索引加载状态",
+        "responses": {
+          "200": {
+            "description": "返回 configuration_error 以及各作品 status、clips、characters。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audio/health": {
+      "get": {
+        "summary": "指定音频作品的运行状态与缓存统计",
+        "parameters": [
+          {
+            "name": "game",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "音频作品 ID 或别名，默认 genshin"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "索引 ready、角色数、片段数和缓存状态。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "尚未配置或初始化失败。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audio/characters": {
+      "get": {
+        "summary": "指定作品的角色和语种、数量",
+        "parameters": [
+          {
+            "name": "game",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "音频作品 ID 或别名，默认 genshin"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "返回 characters 数组，条目带 name、languages、counts。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audio/clips": {
+      "get": {
+        "summary": "指定角色的已有音频索引（只返回元数据）",
+        "parameters": [
+          {
+            "name": "game",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "音频作品 ID 或别名，默认 genshin"
+          },
+          {
+            "name": "character",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "zh",
+                "en",
+                "ja",
+                "ko"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "返回 total、page、limit 和 clips 数组。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audio/voice": {
+      "get": {
+        "summary": "按已存在的音频 clip_id 或随机条件读取原始文件；不生成语音",
+        "parameters": [
+          {
+            "name": "game",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "音频作品 ID 或别名，默认 genshin"
+          },
+          {
+            "name": "character",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "zh",
+                "en",
+                "ja",
+                "ko"
+              ]
+            }
+          },
+          {
+            "name": "output",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "audio",
+                "text"
+              ],
+              "default": "audio"
+            }
+          },
+          {
+            "name": "clip_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          {
+            "name": "seed",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "可选固定选段种子；不可与 clip_id 同时提供"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "WAV 音频或 TXT 原文；支持 HEAD，WAV 支持单段 Range。",
+            "content": {
+              "audio/wav": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "WAV 分段响应。",
+            "content": {
+              "audio/wav": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "未指定 clip_id 和 seed 时重定向到选中的稳定 clip_id。"
+          },
+          "416": {
+            "description": "Range 不符合要求。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "上游音频暂时不可用。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "索引尚未就绪。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           }
         }
       }
